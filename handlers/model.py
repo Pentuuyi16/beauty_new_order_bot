@@ -125,15 +125,22 @@ async def accept_response(callback: CallbackQuery, db: Database, bot: Bot):
 Телефон: {customer['phone_1']}
 {f"Доп. телефон: {customer['phone_2']}" if customer.get('phone_2') else ''}
 Адрес: {customer['address']}
+
+После работы, пожалуйста, оцените заказчика:
     """
     
     try:
         await bot.send_message(
             chat_id=response['model_id'],
-            text=customer_contacts.strip()
+            text=customer_contacts.strip(),
+            reply_markup=get_rating_keyboard(response_id, 'customer')
         )
         
-        await callback.message.edit_text("✅ Отклик принят! Модель получила ваши контакты.")
+        await callback.message.edit_text(
+            "✅ Отклик принят! Модель получила ваши контакты.\n\n"
+            "После работы, пожалуйста, оцените модель:",
+            reply_markup=get_rating_keyboard(response_id, 'model')
+        )
         
     except Exception as e:
         await callback.message.edit_text(f"❌ Ошибка: {e}")
@@ -610,3 +617,91 @@ def format_model_application_for_channel(data: dict, model: dict) -> str:
         text += f"\n📝 {data['note']}"
     
     return text.strip()
+
+# ============== ОЦЕНКА МОДЕЛИ/ЗАКАЗЧИКА ==============
+
+# ============== ОЦЕНКА МОДЕЛИ/ЗАКАЗЧИКА ==============
+
+@router.callback_query(F.data.startswith("rate_model_"))
+async def rate_model(callback: CallbackQuery, db: Database):
+    await callback.answer()
+    
+    # Формат: rate_model_RESPONSE_ID_RATING
+    parts = callback.data.split("_")
+    response_id = int(parts[2])
+    rating = int(parts[3])
+    
+    # Получаем отклик
+    response = await db.get_response(response_id)
+    if not response:
+        await callback.message.answer("❌ Отклик не найден.")
+        return
+    
+    model_id = response['model_id']
+    
+    # Проверяем, не оценивал ли уже ЗА ЭТОТ ОТКЛИК
+    exists = await db.check_response_rating_exists(response_id, callback.from_user.id)
+    if exists:
+        await callback.answer("⚠️ Вы уже оценили модель за эту работу!", show_alert=True)
+        return
+    
+    # Сохраняем оценку привязанную к отклику
+    await db.add_response_rating(response_id, callback.from_user.id, model_id, rating)
+    
+    # Пересчитываем рейтинг
+    new_rating = await db.calculate_simple_rating(model_id)
+    await db.update_user(model_id, rating=new_rating)
+    
+    # Количество оценок
+    count = await db.get_simple_ratings_count(model_id)
+    
+    await callback.message.edit_text(
+        f"✅ Спасибо за оценку!\n\n"
+        f"Вы оценили модель на {rating}/10\n"
+        f"Новый средний рейтинг модели: {new_rating}/10.0 ({count} оценок)"
+    )
+
+@router.callback_query(F.data.startswith("rate_customer_"))
+async def rate_customer(callback: CallbackQuery, db: Database):
+    await callback.answer()
+    
+    # Формат: rate_customer_RESPONSE_ID_RATING
+    parts = callback.data.split("_")
+    response_id = int(parts[2])
+    rating = int(parts[3])
+    
+    # Получаем отклик
+    response = await db.get_response(response_id)
+    if not response:
+        await callback.message.answer("❌ Отклик не найден.")
+        return
+    
+    # Получаем заявку
+    app = await db.get_application(response['application_id'])
+    if not app:
+        await callback.message.answer("❌ Заявка не найдена.")
+        return
+    
+    customer_id = app['customer_id']
+    
+    # Проверяем, не оценивал ли уже ЗА ЭТОТ ОТКЛИК
+    exists = await db.check_response_rating_exists(response_id, callback.from_user.id)
+    if exists:
+        await callback.answer("⚠️ Вы уже оценили заказчика за эту работу!", show_alert=True)
+        return
+    
+    # Сохраняем оценку привязанную к отклику
+    await db.add_response_rating(response_id, callback.from_user.id, customer_id, rating)
+    
+    # Пересчитываем рейтинг
+    new_rating = await db.calculate_simple_rating(customer_id)
+    await db.update_user(customer_id, rating=new_rating)
+    
+    # Количество оценок
+    count = await db.get_simple_ratings_count(customer_id)
+    
+    await callback.message.edit_text(
+        f"✅ Спасибо за оценку!\n\n"
+        f"Вы оценили заказчика на {rating}/10\n"
+        f"Новый средний рейтинг заказчика: {new_rating}/10.0 ({count} оценок)"
+    )

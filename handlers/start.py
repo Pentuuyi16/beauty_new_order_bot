@@ -4,7 +4,12 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 
 from database.database import Database
-from keyboards.inline import get_role_keyboard, get_customer_menu_keyboard_with_subscription, get_model_menu_keyboard_with_subscription
+from keyboards.inline import (
+    get_role_keyboard, 
+    get_customer_menu_keyboard_with_subscription, 
+    get_model_menu_keyboard_with_subscription,
+    get_viewer_menu_keyboard
+)
 from utils.texts import WELCOME_MESSAGE, CHOOSE_ROLE, CUSTOMER_MENU, MODEL_MENU, VIEWER_MENU
 
 router = Router()
@@ -46,7 +51,7 @@ async def cmd_start(message: Message, state: FSMContext, db: Database):
                 )
             )
         elif role == 'viewer':
-            await message.answer(VIEWER_MENU)
+            await message.answer(VIEWER_MENU, reply_markup=get_viewer_menu_keyboard())
 
 @router.message(Command("cancel"))
 async def cmd_cancel(message: Message, state: FSMContext):
@@ -82,17 +87,36 @@ async def back_to_menu(callback: CallbackQuery, db: Database):
                 )
             )
         elif role == 'viewer':
-            await callback.message.edit_text(VIEWER_MENU)
+            await callback.message.edit_text(VIEWER_MENU, reply_markup=get_viewer_menu_keyboard())
+
+@router.callback_query(F.data == "change_role")
+async def change_role(callback: CallbackQuery, db: Database, state: FSMContext):
+    await callback.answer()
+    
+    # Удаляем пользователя из базы данных
+    await db.delete_user(callback.from_user.id)
+    
+    # Очищаем state на всякий случай
+    await state.clear()
+    
+    # Показываем выбор роли заново
+    await callback.message.edit_text(
+        "🔄 Вы решили сменить роль!\n\n" + CHOOSE_ROLE,
+        reply_markup=get_role_keyboard()
+    )
 
 @router.callback_query(F.data == "my_rating")
 async def show_my_rating(callback: CallbackQuery, db: Database):
     await callback.answer()
     
-    user = await db.get_user(callback.from_user.id)
-    rating = await db.calculate_rating(callback.from_user.id)
-    
+    # Пересчитываем рейтинг
+    rating = await db.calculate_simple_rating(callback.from_user.id)
     await db.update_user(callback.from_user.id, rating=rating)
     
+    # Получаем количество оценок
+    ratings_count = await db.get_simple_ratings_count(callback.from_user.id)
+    
     await callback.message.answer(
-        f"⭐ Ваш рейтинг: {rating}/10.0"
+        f"⭐ Ваш рейтинг: {rating}/10.0\n"
+        f"📊 Количество оценок: {ratings_count}"
     )

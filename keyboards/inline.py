@@ -278,3 +278,67 @@ def get_customer_subscription_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="🔙 Назад", callback_data="back_to_menu")
     builder.adjust(1)
     return builder.as_markup()
+
+def get_edit_fields_keyboard_with_id(app_id: int, is_model_app: bool = False) -> InlineKeyboardMarkup:
+    """Клавиатура выбора поля для редактирования с ID заявки"""
+    builder = InlineKeyboardBuilder()
+    
+    if is_model_app:
+        fields = [
+            ("📅 Дата", f"editf_{app_id}_date"),
+            ("📍 Район", f"editf_{app_id}_district"),
+            ("💆 Категория", f"editf_{app_id}_category"),
+            ("🔹 Зоны", f"editf_{app_id}_zones"),
+            ("🕐 Время", f"editf_{app_id}_time_range"),
+            ("🎥 Фото/видео", f"editf_{app_id}_photo_video"),
+            ("💰 Тип участия", f"editf_{app_id}_participation_type"),
+            ("📝 Примечание", f"editf_{app_id}_note"),
+        ]
+    else:
+        fields = [
+            ("💆 Категория", f"editf_{app_id}_category"),
+            ("📂 Подкатегория", f"editf_{app_id}_subcategory"),
+            ("🏙️ Город", f"editf_{app_id}_city"),
+            ("📍 Район", f"editf_{app_id}_district"),
+            ("📅 Дата", f"editf_{app_id}_date"),
+            ("🕐 Время", f"editf_{app_id}_time"),
+            ("⏱️ Длительность", f"editf_{app_id}_duration"),
+            ("📋 Требования", f"editf_{app_id}_requirements"),
+            ("👥 Кол-во моделей", f"editf_{app_id}_models_needed"),
+            ("🎓 Нужен опыт", f"editf_{app_id}_experience_required"),
+            ("👁️ Зрители", f"editf_{app_id}_viewers_count"),
+            ("🎥 Фото/видео", f"editf_{app_id}_photo_video"),
+            ("🧴 Оплата материалов", f"editf_{app_id}_materials_payment"),
+            ("💰 Тип участия", f"editf_{app_id}_participation_type"),
+            ("💵 Сумма оплаты", f"editf_{app_id}_payment_amount"),
+            ("👗 Дресс-код", f"editf_{app_id}_dress_code"),
+            ("💬 Комментарий", f"editf_{app_id}_comment"),
+        ]
+    
+    for text, callback in fields:
+        builder.button(text=text, callback_data=callback)
+    
+    builder.button(text="🔙 Назад", callback_data=f"view_app_{app_id}")
+    builder.adjust(2)
+    return builder.as_markup()
+
+def get_viewer_menu_keyboard() -> InlineKeyboardMarkup:
+    """Меню зрителя с кнопкой смены роли"""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔄 Сменить роль", callback_data="change_role")
+    builder.adjust(1)
+    return builder.as_markup()
+
+def get_rating_keyboard(response_id: int, rating_type: str) -> InlineKeyboardMarkup:
+    """
+    Клавиатура для оценки (1-10)
+    rating_type: 'model' или 'customer'
+    """
+    builder = InlineKeyboardBuilder()
+    
+    # Создаем кнопки от 1 до 10
+    for i in range(1, 11):
+        builder.button(text=str(i), callback_data=f"rate_{rating_type}_{response_id}_{i}")
+    
+    builder.adjust(5)  # 5 кнопок в ряд
+    return builder.as_markup()

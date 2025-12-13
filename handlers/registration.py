@@ -6,12 +6,10 @@ from database.database import Database
 from utils.states import RegistrationStates
 from keyboards.inline import (
     get_gdpr_keyboard, 
-    get_customer_menu_keyboard, 
-    get_model_menu_keyboard,
-    get_experience_keyboard,
-    get_yes_no_keyboard,
+    get_customer_menu_keyboard_with_subscription,
     get_model_menu_keyboard_with_subscription,
-    get_customer_menu_keyboard_with_subscription
+    get_experience_keyboard,
+    get_yes_no_keyboard
 )
 from keyboards.reply import get_done_keyboard, remove_keyboard
 from utils.texts import *
@@ -29,14 +27,17 @@ async def process_role_selection(callback: CallbackQuery, state: FSMContext, db:
     
     if role == "viewer":
         await db.add_user(callback.from_user.id, callback.from_user.username, "viewer")
-        await callback.message.edit_text(VIEWER_MENU)
-        await state.clear()
-        # Генерируем ссылку-приглашение для зрителя
-        await callback.message.answer(
+        
+        from keyboards.inline import get_viewer_menu_keyboard
+        
+        await callback.message.edit_text(
             f"✅ Вы зарегистрированы как зритель!\n\n"
             f"Перейдите в канал для просмотра заявок:\n"
-            f"https://t.me/alievtestbot"
+            f"https://t.me/model_cheby\n\n"
+            f"💡 Если вас заинтересует тематика, вы всегда можете сменить роль на модель или заказчика!",
+            reply_markup=get_viewer_menu_keyboard()
         )
+        await state.clear()
     elif role == "customer":
         await state.update_data(role="customer")
         await state.set_state(RegistrationStates.customer_full_name)
@@ -124,31 +125,20 @@ async def process_customer_gdpr_accept(callback: CallbackQuery, state: FSMContex
     await state.clear()
     await callback.message.edit_text(REGISTRATION_SUCCESS)
     
-    # Создаем ссылку-приглашение в чат
-    try:
-        # Создаем invite link для пользователя
-        invite_link = await bot.create_chat_invite_link(
-            chat_id=Config.CHAT_ID,
-            member_limit=1,  # Одноразовая ссылка
-            name=f"Заказчик {data.get('full_name')}"
-        )
-        
-        await callback.message.answer(
-            f"🎉 Регистрация завершена!\n\n"
-            f"Перейдите в чат по ссылке:\n{invite_link.invite_link}\n\n"
-            f"💼 Для создания заявок необходимо оформить подписку - 500 руб/месяц\n\n"
-            f"После перехода вам будут доступны все функции.",
-            reply_markup=get_customer_menu_keyboard_with_subscription(has_subscription=False)
-        )
-    except Exception as e:
-        # Если не получилось создать ссылку, даем обычную
-        await callback.message.answer(
-            f"🎉 Регистрация завершена!\n\n"
-            f"Перейдите в чат:\nhttps://t.me/alievtestbot\n\n"
-            f"💼 Для создания заявок необходимо оформить подписку - 500 руб/месяц\n\n"
-            f"После перехода вам будут доступны все функции.",
-            reply_markup=get_customer_menu_keyboard_with_subscription(has_subscription=False)
-        )
+    await callback.message.answer(
+        f"🎉 Регистрация завершена!\n\n"
+        f"Перейдите в чат:\nhttps://t.me/model_cheby\n\n"
+        f"💼 Для создания заявок необходимо оформить подписку - 500 руб/месяц\n\n"
+        f"После перехода вам будут доступны все функции.",
+        reply_markup=get_customer_menu_keyboard_with_subscription(has_subscription=False)
+    )
+
+@router.callback_query(RegistrationStates.customer_gdpr, F.data == "gdpr_decline")
+async def process_customer_gdpr_decline(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.clear()
+    await callback.message.edit_text("❌ Без согласия на обработку данных регистрация невозможна.\n\nОтправьте /start для повторной попытки.")
+
 # ============== РЕГИСТРАЦИЯ МОДЕЛИ ==============
 
 @router.message(RegistrationStates.model_full_name)
@@ -286,45 +276,23 @@ async def process_model_gdpr_accept(callback: CallbackQuery, state: FSMContext, 
         phone_1=data.get('phone_1'),
         portfolio_ids=data.get('portfolio_ids'),
         gdpr_consent=True,
-        is_privileged=False  # Важно! Модель начинает без привилегий
+        is_privileged=False
     )
     
     await state.clear()
     await callback.message.edit_text(REGISTRATION_SUCCESS)
     
-    # Создаем ссылку-приглашение в чат
-    try:
-        # Создаем invite link для пользователя
-        invite_link = await bot.create_chat_invite_link(
-            chat_id=Config.CHAT_ID,
-            member_limit=1,
-            name=f"Модель {data.get('full_name')}"
+    await callback.message.answer(
+        f"🎉 Регистрация завершена!\n\n"
+        f"Перейдите в чат:\nhttps://t.me/model_cheby\n\n"
+        f"💡 Хотите создавать свои заявки?\n"
+        f"Оформите привилегированную подписку всего за 100 руб/месяц!\n\n"
+        f"После перехода вам будут доступны все функции.",
+        reply_markup=get_model_menu_keyboard_with_subscription(
+            is_privileged=False, 
+            has_subscription=False
         )
-        
-        await callback.message.answer(
-            f"🎉 Регистрация завершена!\n\n"
-            f"Перейдите в чат по ссылке:\n{invite_link.invite_link}\n\n"
-            f"💡 Хотите создавать свои заявки?\n"
-            f"Оформите привилегированную подписку всего за 100 руб/месяц!\n\n"
-            f"После перехода вам будут доступны все функции.",
-            reply_markup=get_model_menu_keyboard_with_subscription(
-                is_privileged=False, 
-                has_subscription=False
-            )
-        )
-    except Exception as e:
-        # Если не получилось создать ссылку, даем обычную
-        await callback.message.answer(
-            f"🎉 Регистрация завершена!\n\n"
-            f"Перейдите в чат:\nhttps://t.me/alievtestbot\n\n"
-            f"💡 Хотите создавать свои заявки?\n"
-            f"Оформите привилегированную подписку всего за 100 руб/месяц!\n\n"
-            f"После перехода вам будут доступны все функции.",
-            reply_markup=get_model_menu_keyboard_with_subscription(
-                is_privileged=False, 
-                has_subscription=False
-            )
-        )
+    )
 
 @router.callback_query(RegistrationStates.model_gdpr, F.data == "gdpr_decline")
 async def process_model_gdpr_decline(callback: CallbackQuery, state: FSMContext):

@@ -418,22 +418,8 @@ class Database:
             await db.commit()
     
     async def calculate_rating(self, user_id: int) -> float:
-        """Рассчитать средний рейтинг пользователя"""
-        async with aiosqlite.connect(self.db_path) as db:
-            async with db.execute(
-                """
-                SELECT AVG(
-                    (CAST(came AS REAL) + CAST(prepared AS REAL) + 
-                     CAST(requirements_met AS REAL) + CAST(work_again AS REAL) +
-                     CAST(location_convenient AS REAL) + CAST(conditions_met AS REAL) +
-                     CAST(attitude_correct AS REAL) + CAST(cooperate_again AS REAL)) / 8.0 * 10
-                ) as rating
-                FROM ratings WHERE rated_id = ?
-                """,
-                (user_id,)
-            ) as cursor:
-                row = await cursor.fetchone()
-                return round(row[0], 1) if row and row[0] else 0.0
+        """Рассчитать средний рейтинг пользователя (используем calculate_simple_rating)"""
+        return await self.calculate_simple_rating(user_id)
             # ============== SUBSCRIPTIONS ==============
     
     async def add_subscription(self, user_id: int, days: int, payment_id: str = None) -> int:
@@ -548,3 +534,79 @@ class Database:
             return False
         
         return True
+    
+    async def delete_user(self, user_id: int):
+        """Удалить пользователя из БД (для смены роли)"""
+        async with aiosqlite.connect('bot_database.db') as db:
+            # Удаляем только пользователя, остальное удалится автоматически через CASCADE
+            await db.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+            await db.commit()
+    
+    async def add_simple_rating(self, rater_id: int, rated_id: int, rating: int):
+        """Добавить простую оценку от 1 до 10"""
+        async with aiosqlite.connect(self.db_path) as db:
+            # Создаем фиктивный application_id = 0 для простых оценок
+            await db.execute("""
+                INSERT INTO ratings (application_id, rater_id, rated_id, 
+                    came, prepared, requirements_met, work_again,
+                    location_convenient, conditions_met, attitude_correct, cooperate_again)
+                VALUES (0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (rater_id, rated_id, 
+                  rating >= 8, rating >= 8, rating >= 8, rating >= 8,
+                  rating >= 8, rating >= 8, rating >= 8, rating >= 8))
+            await db.commit()
+    
+    async def check_simple_rating_exists(self, rater_id: int, rated_id: int) -> bool:
+        """Проверить, оставлял ли уже оценку"""
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("""
+                SELECT id FROM ratings WHERE rater_id = ? AND rated_id = ?
+            """, (rater_id, rated_id)) as cursor:
+                result = await cursor.fetchone()
+                return result is not None
+    
+    async def calculate_simple_rating(self, user_id: int) -> float:
+        """Вычислить средний рейтинг из простых оценок"""
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("""
+                SELECT AVG(
+                    (CAST(came AS REAL) + CAST(prepared AS REAL) + 
+                     CAST(requirements_met AS REAL) + CAST(work_again AS REAL) +
+                     CAST(location_convenient AS REAL) + CAST(conditions_met AS REAL) +
+                     CAST(attitude_correct AS REAL) + CAST(cooperate_again AS REAL)) / 8.0 * 10
+                ) as avg_rating
+                FROM ratings WHERE rated_id = ?
+            """, (user_id,)) as cursor:
+                result = await cursor.fetchone()
+                return round(result[0], 1) if result and result[0] else 0.0
+    
+    async def get_simple_ratings_count(self, user_id: int) -> int:
+        """Получить количество оценок"""
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("""
+                SELECT COUNT(*) FROM ratings WHERE rated_id = ?
+            """, (user_id,)) as cursor:
+                result = await cursor.fetchone()
+                return result[0] if result else 0
+    async def add_response_rating(self, response_id: int, rater_id: int, rated_id: int, rating: int):
+        """Добавить оценку привязанную к конкретному отклику"""
+        async with aiosqlite.connect(self.db_path) as db:
+            # application_id = response_id для привязки к отклику
+            await db.execute("""
+                INSERT INTO ratings (application_id, rater_id, rated_id, 
+                    came, prepared, requirements_met, work_again,
+                    location_convenient, conditions_met, attitude_correct, cooperate_again)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (response_id, rater_id, rated_id, 
+                  rating >= 8, rating >= 8, rating >= 8, rating >= 8,
+                  rating >= 8, rating >= 8, rating >= 8, rating >= 8))
+            await db.commit()
+    
+    async def check_response_rating_exists(self, response_id: int, rater_id: int) -> bool:
+        """Проверить, оставлял ли уже оценку за этот отклик"""
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("""
+                SELECT id FROM ratings WHERE application_id = ? AND rater_id = ?
+            """, (response_id, rater_id)) as cursor:
+                result = await cursor.fetchone()
+                return result is not None

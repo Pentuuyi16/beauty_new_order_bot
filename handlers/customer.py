@@ -292,6 +292,21 @@ async def confirm_publish_application(callback: CallbackQuery, state: FSMContext
     await callback.answer()
     
     data = await state.get_data()
+    
+    # Проверяем - это новая заявка или редактирование
+    app_id = data.get('editing_app_id')
+    
+    if app_id:
+        # Редактирование - просто завершаем
+        app = await db.get_application(app_id)
+        await state.clear()
+        await callback.message.edit_text(
+            f"✅ Изменения сохранены!\n\n{format_application(app)}",
+            reply_markup=get_application_actions_keyboard(app_id, app['is_closed'])
+        )
+        return
+    
+    # Новая заявка - публикуем
     customer = await db.get_user(callback.from_user.id)
     
     # Создаем заявку в БД
@@ -350,15 +365,26 @@ async def confirm_edit_application(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(ApplicationStates.confirm, F.data == "confirm_cancel")
 async def confirm_cancel_application(callback: CallbackQuery, state: FSMContext, db: Database):
     await callback.answer()
+    
+    data = await state.get_data()
+    app_id = data.get('editing_app_id')
+    
     await state.clear()
     
-    has_subscription = await db.check_customer_subscription(callback.from_user.id)
-    await callback.message.edit_text(
-        "❌ Создание заявки отменено.",
-        reply_markup=get_customer_menu_keyboard_with_subscription(has_subscription=has_subscription)
-    )
-
-# ============== РЕДАКТИРОВАНИЕ ЗАЯВКИ ==============
+    if app_id:
+        # Отменяем редактирование
+        app = await db.get_application(app_id)
+        await callback.message.edit_text(
+            format_application(app),
+            reply_markup=get_application_actions_keyboard(app_id, app['is_closed'])
+        )
+    else:
+        # Отменяем создание
+        has_subscription = await db.check_customer_subscription(callback.from_user.id)
+        await callback.message.edit_text(
+            "❌ Создание заявки отменено.",
+            reply_markup=get_customer_menu_keyboard_with_subscription(has_subscription=has_subscription)
+        )
 
 # ============== РЕДАКТИРОВАНИЕ ЗАЯВКИ ==============
 
@@ -373,8 +399,28 @@ async def start_edit_application(callback: CallbackQuery, state: FSMContext, db:
         await callback.message.answer("❌ Заявка не найдена.")
         return
     
-    # Сохраняем ID заявки в state
-    await state.update_data(editing_app_id=app_id)
+    # Загружаем ВСЕ данные заявки в state (КАК У МОДЕЛИ!)
+    await state.update_data(
+        editing_app_id=app_id,
+        category=app['category'],
+        subcategory=app['subcategory'],
+        city=app['city'],
+        district=app['district'],
+        date=app['date'],
+        time=app['time'],
+        duration=app['duration'],
+        requirements=app['requirements'],
+        models_needed=app['models_needed'],
+        experience_required=app['experience_required'],
+        viewers_count=app['viewers_count'],
+        photo_video=app['photo_video'],
+        materials_payment=app['materials_payment'],
+        participation_type=app['participation_type'],
+        payment_amount=app.get('payment_amount'),
+        dress_code=app.get('dress_code'),
+        comment=app.get('comment')
+    )
+    
     await state.set_state(ApplicationStates.edit_field)
     
     await callback.message.edit_text(
@@ -387,7 +433,7 @@ async def process_edit_field_selection(callback: CallbackQuery, state: FSMContex
     await callback.answer()
     
     field = callback.data.replace("edit_field_", "")
-    await state.update_data(current_edit_field=field)
+    await state.update_data(edit_field_name=field)
     await state.set_state(ApplicationStates.edit_value)
     
     field_prompts = {
@@ -430,38 +476,21 @@ async def process_edit_field_selection(callback: CallbackQuery, state: FSMContex
 @router.message(ApplicationStates.edit_value)
 async def process_edit_value_text(message: Message, state: FSMContext, db: Database, bot: Bot):
     data = await state.get_data()
-    field_name = data.get('current_edit_field')
+    field_name = data.get('edit_field_name')
     app_id = data.get('editing_app_id')
     
-    if not app_id:
-        await message.answer("❌ Ошибка: ID заявки не найден.")
-        await state.clear()
-        return
-    
-    if not field_name:
-        await message.answer("❌ Ошибка: поле не выбрано.")
-        await state.clear()
-        return
+    # Обновляем значение в state
+    await state.update_data(**{field_name: message.text})
     
     # Обновляем в БД
-    try:
-        await db.update_application(app_id, **{field_name: message.text})
-    except Exception as e:
-        await message.answer(f"❌ Ошибка обновления БД: {e}")
-        await state.clear()
-        return
+    await db.update_application(app_id, **{field_name: message.text})
     
-    # Получаем обновленную заявку из БД
+    # Получаем обновленную заявку
     app = await db.get_application(app_id)
-    if not app:
-        await message.answer("❌ Заявка не найдена после обновления.")
-        await state.clear()
-        return
-    
     customer = await db.get_user(message.from_user.id)
     
     # Обновляем сообщение в канале
-    if app.get('message_id'):
+    if app and app.get('message_id'):
         try:
             app_text = format_application_for_channel_from_db(app, customer)
             await bot.edit_message_text(
@@ -473,14 +502,18 @@ async def process_edit_value_text(message: Message, state: FSMContext, db: Datab
         except Exception as e:
             print(f"Ошибка обновления сообщения в канале: {e}")
     
-    # Показываем обновленную заявку
-    app_preview = format_application(app)
+    # Получаем обновленные данные из state
+    updated_data = await state.get_data()
+    
+    # Показываем обновленную анкету
+    app_preview = format_application_preview(updated_data, customer)
+    
     await message.answer(
         f"✅ Поле '{field_name}' обновлено!\n\n{app_preview}",
-        reply_markup=get_application_actions_keyboard(app_id, app['is_closed'])
+        reply_markup=get_confirm_keyboard()
     )
     
-    await state.clear()
+    await state.set_state(ApplicationStates.confirm)
 
 @router.callback_query(ApplicationStates.edit_value, F.data.startswith("cat_"))
 async def process_edit_category(callback: CallbackQuery, state: FSMContext, db: Database, bot: Bot):
@@ -490,10 +523,8 @@ async def process_edit_category(callback: CallbackQuery, state: FSMContext, db: 
     data = await state.get_data()
     app_id = data.get('editing_app_id')
     
-    if not app_id:
-        await callback.message.answer("❌ Ошибка: ID заявки не найден.")
-        await state.clear()
-        return
+    # Обновляем в state
+    await state.update_data(category=category)
     
     # Обновляем в БД
     await db.update_application(app_id, category=category)
@@ -503,7 +534,7 @@ async def process_edit_category(callback: CallbackQuery, state: FSMContext, db: 
     customer = await db.get_user(callback.from_user.id)
     
     # Обновляем в канале
-    if app.get('message_id'):
+    if app and app.get('message_id'):
         try:
             app_text = format_application_for_channel_from_db(app, customer)
             await bot.edit_message_text(
@@ -515,14 +546,18 @@ async def process_edit_category(callback: CallbackQuery, state: FSMContext, db: 
         except Exception:
             pass
     
-    # Показываем обновленную заявку
-    app_preview = format_application(app)
+    # Получаем обновленные данные
+    updated_data = await state.get_data()
+    
+    # Показываем обновленную анкету
+    app_preview = format_application_preview(updated_data, customer)
+    
     await callback.message.edit_text(
         f"✅ Категория обновлена!\n\n{app_preview}",
-        reply_markup=get_application_actions_keyboard(app_id, app['is_closed'])
+        reply_markup=get_confirm_keyboard()
     )
     
-    await state.clear()
+    await state.set_state(ApplicationStates.confirm)
 
 @router.callback_query(ApplicationStates.edit_value, F.data.startswith("subcat_"))
 async def process_edit_subcategory(callback: CallbackQuery, state: FSMContext, db: Database, bot: Bot):
@@ -532,10 +567,8 @@ async def process_edit_subcategory(callback: CallbackQuery, state: FSMContext, d
     data = await state.get_data()
     app_id = data.get('editing_app_id')
     
-    if not app_id:
-        await callback.message.answer("❌ Ошибка: ID заявки не найден.")
-        await state.clear()
-        return
+    # Обновляем в state
+    await state.update_data(subcategory=subcategory)
     
     # Обновляем в БД
     await db.update_application(app_id, subcategory=subcategory)
@@ -545,7 +578,7 @@ async def process_edit_subcategory(callback: CallbackQuery, state: FSMContext, d
     customer = await db.get_user(callback.from_user.id)
     
     # Обновляем в канале
-    if app.get('message_id'):
+    if app and app.get('message_id'):
         try:
             app_text = format_application_for_channel_from_db(app, customer)
             await bot.edit_message_text(
@@ -557,27 +590,26 @@ async def process_edit_subcategory(callback: CallbackQuery, state: FSMContext, d
         except Exception:
             pass
     
-    # Показываем обновленную заявку
-    app_preview = format_application(app)
+    # Получаем обновленные данные
+    updated_data = await state.get_data()
+    
+    # Показываем обновленную анкету
+    app_preview = format_application_preview(updated_data, customer)
+    
     await callback.message.edit_text(
         f"✅ Подкатегория обновлена!\n\n{app_preview}",
-        reply_markup=get_application_actions_keyboard(app_id, app['is_closed'])
+        reply_markup=get_confirm_keyboard()
     )
     
-    await state.clear()
+    await state.set_state(ApplicationStates.confirm)
 
 @router.callback_query(ApplicationStates.edit_value)
 async def process_edit_value_callback(callback: CallbackQuery, state: FSMContext, db: Database, bot: Bot):
     await callback.answer()
     
     data = await state.get_data()
-    field_name = data.get('current_edit_field')
+    field_name = data.get('edit_field_name')
     app_id = data.get('editing_app_id')
-    
-    if not app_id:
-        await callback.message.answer("❌ Ошибка: ID заявки не найден.")
-        await state.clear()
-        return
     
     # Обработка различных callback данных
     value_map = {
@@ -595,38 +627,42 @@ async def process_edit_value_callback(callback: CallbackQuery, state: FSMContext
     else:
         value = value_map.get(callback.data)
     
-    if value is None:
-        await callback.message.answer("❌ Неизвестное значение.")
-        return
-    
-    # Обновляем в БД
-    await db.update_application(app_id, **{field_name: value})
-    
-    # Получаем обновленную заявку
-    app = await db.get_application(app_id)
-    customer = await db.get_user(callback.from_user.id)
-    
-    # Обновляем в канале
-    if app.get('message_id'):
-        try:
-            app_text = format_application_for_channel_from_db(app, customer)
-            await bot.edit_message_text(
-                chat_id=Config.CHAT_ID,
-                message_id=app['message_id'],
-                text=app_text,
-                reply_markup=get_application_keyboard(app_id, app['is_closed'])
-            )
-        except Exception:
-            pass
-    
-    # Показываем обновленную заявку
-    app_preview = format_application(app)
-    await callback.message.edit_text(
-        f"✅ Поле обновлено!\n\n{app_preview}",
-        reply_markup=get_application_actions_keyboard(app_id, app['is_closed'])
-    )
-    
-    await state.clear()
+    if value is not None:
+        # Обновляем в state
+        await state.update_data(**{field_name: value})
+        
+        # Обновляем в БД
+        await db.update_application(app_id, **{field_name: value})
+        
+        # Получаем обновленную заявку
+        app = await db.get_application(app_id)
+        customer = await db.get_user(callback.from_user.id)
+        
+        # Обновляем в канале
+        if app and app.get('message_id'):
+            try:
+                app_text = format_application_for_channel_from_db(app, customer)
+                await bot.edit_message_text(
+                    chat_id=Config.CHAT_ID,
+                    message_id=app['message_id'],
+                    text=app_text,
+                    reply_markup=get_application_keyboard(app_id, app['is_closed'])
+                )
+            except Exception:
+                pass
+        
+        # Получаем обновленные данные
+        updated_data = await state.get_data()
+        
+        # Показываем обновленную анкету
+        app_preview = format_application_preview(updated_data, customer)
+        
+        await callback.message.edit_text(
+            f"✅ Поле обновлено!\n\n{app_preview}",
+            reply_markup=get_confirm_keyboard()
+        )
+        
+        await state.set_state(ApplicationStates.confirm)
 
 @router.callback_query(ApplicationStates.edit_field, F.data == "cancel_edit")
 async def cancel_edit(callback: CallbackQuery, state: FSMContext, db: Database):
@@ -635,20 +671,25 @@ async def cancel_edit(callback: CallbackQuery, state: FSMContext, db: Database):
     data = await state.get_data()
     app_id = data.get('editing_app_id')
     
-    await state.clear()
-    
     if app_id:
+        # Если редактировали существующую заявку
         app = await db.get_application(app_id)
+        await state.clear()
         await callback.message.edit_text(
             format_application(app),
             reply_markup=get_application_actions_keyboard(app_id, app['is_closed'])
         )
     else:
-        has_subscription = await db.check_customer_subscription(callback.from_user.id)
+        # Если создавали новую заявку
+        customer = await db.get_user(callback.from_user.id)
+        app_preview = format_application_preview(data, customer)
+        
         await callback.message.edit_text(
-            "❌ Редактирование отменено.",
-            reply_markup=get_customer_menu_keyboard_with_subscription(has_subscription=has_subscription)
+            "Проверьте данные заявки:\n\n" + app_preview,
+            reply_markup=get_confirm_keyboard()
         )
+        
+        await state.set_state(ApplicationStates.confirm)
 
 # ============== РЕЙТИНГ ==============
 
@@ -656,13 +697,16 @@ async def cancel_edit(callback: CallbackQuery, state: FSMContext, db: Database):
 async def show_my_rating_customer(callback: CallbackQuery, db: Database):
     await callback.answer()
     
-    user = await db.get_user(callback.from_user.id)
-    rating = await db.calculate_rating(callback.from_user.id)
-    
+    # Пересчитываем рейтинг
+    rating = await db.calculate_simple_rating(callback.from_user.id)
     await db.update_user(callback.from_user.id, rating=rating)
     
+    # Получаем количество оценок
+    ratings_count = await db.get_simple_ratings_count(callback.from_user.id)
+    
     await callback.message.answer(
-        f"⭐ Ваш рейтинг: {rating}/10.0"
+        f"⭐ Ваш рейтинг: {rating}/10.0\n"
+        f"📊 Количество оценок: {ratings_count}"
     )
 
 # ============== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ==============
