@@ -11,6 +11,21 @@ def get_role_keyboard() -> InlineKeyboardMarkup:
     builder.adjust(1)
     return builder.as_markup()
 
+def get_role_change_keyboard(current_role: str) -> InlineKeyboardMarkup:
+    """Клавиатура смены роли (без текущей роли)"""
+    builder = InlineKeyboardBuilder()
+    
+    if current_role != "viewer":
+        builder.button(text="👀 Зритель", callback_data="change_to_viewer")
+    if current_role != "customer":
+        builder.button(text="🧑‍💼 Заказчик", callback_data="change_to_customer")
+    if current_role != "model":
+        builder.button(text="💃 Модель", callback_data="change_to_model")
+    
+    builder.button(text="❌ Не сменять роль", callback_data="cancel_role_change")
+    builder.adjust(1)
+    return builder.as_markup()
+
 def get_gdpr_keyboard() -> InlineKeyboardMarkup:
     """Клавиатура согласия на обработку данных"""
     builder = InlineKeyboardBuilder()
@@ -52,6 +67,8 @@ def get_model_menu_keyboard_with_subscription(is_privileged: bool = False, has_s
         # У модели нет подписки
         builder.button(text="💎 Стать привилегированной", callback_data="buy_subscription")
     
+    builder.button(text="👤 Моя роль", callback_data="show_my_role")
+    builder.button(text="🔄 Сменить роль", callback_data="change_role")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -246,7 +263,6 @@ def get_back_keyboard() -> InlineKeyboardMarkup:
     builder.button(text="🔙 Назад", callback_data="back_to_menu")
     builder.adjust(1)
     return builder.as_markup()
-# Добавьте в конец файла:
 
 def get_customer_menu_keyboard_with_subscription(has_subscription: bool = False) -> InlineKeyboardMarkup:
     """Меню заказчика с подпиской"""
@@ -261,6 +277,8 @@ def get_customer_menu_keyboard_with_subscription(has_subscription: bool = False)
         builder.button(text="💼 Оформить подписку", callback_data="buy_customer_subscription")
         builder.button(text="⭐ Мой рейтинг", callback_data="my_rating")
     
+    builder.button(text="👤 Моя роль", callback_data="show_my_role")
+    builder.button(text="🔄 Сменить роль", callback_data="change_role")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -325,6 +343,7 @@ def get_edit_fields_keyboard_with_id(app_id: int, is_model_app: bool = False) ->
 def get_viewer_menu_keyboard() -> InlineKeyboardMarkup:
     """Меню зрителя с кнопкой смены роли"""
     builder = InlineKeyboardBuilder()
+    builder.button(text="👤 Моя роль", callback_data="show_my_role")
     builder.button(text="🔄 Сменить роль", callback_data="change_role")
     builder.adjust(1)
     return builder.as_markup()

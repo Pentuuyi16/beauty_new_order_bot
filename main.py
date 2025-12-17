@@ -38,6 +38,7 @@ async def main():
     # Инициализация БД
     db = Database()
     await db.init_db()
+    await db.migrate_subscriptions_add_role()
     logger.info("База данных инициализирована")
     
     # Регистрация middleware

@@ -152,6 +152,20 @@ class Database:
     
     # ============== USERS ==============
     
+    async def migrate_subscriptions_add_role(self):
+        """Добавить поле role в таблицу subscriptions"""
+        async with aiosqlite.connect(self.db_path) as db:
+            # Проверяем есть ли уже колонка role
+            async with db.execute("PRAGMA table_info(subscriptions)") as cursor:
+                columns = await cursor.fetchall()
+                column_names = [col[1] for col in columns]
+                
+                if 'role' not in column_names:
+                    # Добавляем колонку role
+                    await db.execute("ALTER TABLE subscriptions ADD COLUMN role TEXT DEFAULT 'model'")
+                    await db.commit()
+                    print("✅ Добавлена колонка role в таблицу subscriptions")
+
     async def add_user(self, user_id: int, username: str, role: str):
         """Добавить пользователя"""
         async with aiosqlite.connect(self.db_path) as db:
@@ -420,49 +434,62 @@ class Database:
     async def calculate_rating(self, user_id: int) -> float:
         """Рассчитать средний рейтинг пользователя (используем calculate_simple_rating)"""
         return await self.calculate_simple_rating(user_id)
-            # ============== SUBSCRIPTIONS ==============
     
-    async def add_subscription(self, user_id: int, days: int, payment_id: str = None) -> int:
-        """Добавить подписку"""
+    # ============== SUBSCRIPTIONS ==============
+    
+    async def add_subscription(self, user_id: int, days: int, payment_id: str = None, role: str = "model") -> int:
+        """Добавить подписку для конкретной роли"""
         from datetime import datetime, timedelta
         
         end_date = datetime.now() + timedelta(days=days)
         
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute(
-                "INSERT INTO subscriptions (user_id, end_date, payment_id) VALUES (?, ?, ?)",
-                (user_id, end_date.isoformat(), payment_id)
+                "INSERT INTO subscriptions (user_id, end_date, payment_id, role) VALUES (?, ?, ?, ?)",
+                (user_id, end_date.isoformat(), payment_id, role)
             )
             await db.commit()
             
-            # Обновляем статус привилегированной модели
-            await self.update_user(user_id, is_privileged=True)
+            # Обновляем статус привилегированной модели только если это подписка модели
+            if role == "model":
+                await self.update_user(user_id, is_privileged=True)
             
             return cursor.lastrowid
     
-    async def get_active_subscription(self, user_id: int):
-        """Получить активную подписку пользователя"""
+    async def get_active_subscription(self, user_id: int, role: str = None):
+        """Получить активную подписку пользователя для конкретной роли"""
         from datetime import datetime
         
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
-            async with db.execute(
+            
+            if role:
+                # Ищем подписку для конкретной роли
+                query = """
+                    SELECT * FROM subscriptions 
+                    WHERE user_id = ? AND role = ? AND is_active = 1 AND end_date > ? 
+                    ORDER BY end_date DESC LIMIT 1
                 """
-                SELECT * FROM subscriptions 
-                WHERE user_id = ? AND is_active = 1 AND end_date > ? 
-                ORDER BY end_date DESC LIMIT 1
-                """,
-                (user_id, datetime.now().isoformat())
-            ) as cursor:
+                params = (user_id, role, datetime.now().isoformat())
+            else:
+                # Ищем любую активную подписку (для обратной совместимости)
+                query = """
+                    SELECT * FROM subscriptions 
+                    WHERE user_id = ? AND is_active = 1 AND end_date > ? 
+                    ORDER BY end_date DESC LIMIT 1
+                """
+                params = (user_id, datetime.now().isoformat())
+            
+            async with db.execute(query, params) as cursor:
                 row = await cursor.fetchone()
                 return dict(row) if row else None
     
     async def check_subscription_expired(self, user_id: int) -> bool:
-        """Проверить истекла ли подписка"""
-        subscription = await self.get_active_subscription(user_id)
+        """Проверить истекла ли подписка МОДЕЛИ"""
+        subscription = await self.get_active_subscription(user_id, role="model")
         
         if not subscription:
-            # Если нет активной подписки, убираем привилегии
+            # Если нет активной подписки модели, убираем привилегии
             await self.update_user(user_id, is_privileged=False)
             return True
         
@@ -478,10 +505,10 @@ class Database:
             await db.commit()
     
     async def get_subscription_info(self, user_id: int) -> dict:
-        """Получить информацию о подписке"""
+        """Получить информацию о подписке МОДЕЛИ"""
         from datetime import datetime
         
-        subscription = await self.get_active_subscription(user_id)
+        subscription = await self.get_active_subscription(user_id, role="model")
         
         if not subscription:
             return {
@@ -498,11 +525,12 @@ class Database:
             'days_left': max(0, days_left),
             'end_date': end_date.strftime('%d.%m.%Y')
         }
+    
     async def get_customer_subscription_info(self, user_id: int) -> dict:
-        """Получить информацию о подписке заказчика"""
+        """Получить информацию о подписке ЗАКАЗЧИКА"""
         from datetime import datetime
         
-        subscription = await self.get_active_subscription(user_id)
+        subscription = await self.get_active_subscription(user_id, role="customer")
         
         if not subscription:
             return {
@@ -522,7 +550,7 @@ class Database:
     
     async def check_customer_subscription(self, user_id: int) -> bool:
         """Проверить есть ли у заказчика активная подписка"""
-        subscription = await self.get_active_subscription(user_id)
+        subscription = await self.get_active_subscription(user_id, role="customer")
         
         if not subscription:
             return False
@@ -537,8 +565,15 @@ class Database:
     
     async def delete_user(self, user_id: int):
         """Удалить пользователя из БД (для смены роли)"""
-        async with aiosqlite.connect('bot_database.db') as db:
+        async with aiosqlite.connect(self.db_path) as db:
             # Удаляем только пользователя, остальное удалится автоматически через CASCADE
+            await db.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
+            await db.commit()
+    
+    async def delete_user_keep_subscription(self, user_id: int):
+        """Удалить данные пользователя, но сохранить подписку"""
+        async with aiosqlite.connect(self.db_path) as db:
+            # Удаляем только пользователя, подписки остаются в таблице subscriptions
             await db.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
             await db.commit()
     
@@ -588,6 +623,7 @@ class Database:
             """, (user_id,)) as cursor:
                 result = await cursor.fetchone()
                 return result[0] if result else 0
+    
     async def add_response_rating(self, response_id: int, rater_id: int, rated_id: int, rating: int):
         """Добавить оценку привязанную к конкретному отклику"""
         async with aiosqlite.connect(self.db_path) as db:

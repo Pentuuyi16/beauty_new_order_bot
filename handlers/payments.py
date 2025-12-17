@@ -2,7 +2,8 @@ from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 import uuid
-from yookassa import Configuration, Payment
+import requests
+import base64
 
 from database.database import Database
 from keyboards.inline import (
@@ -18,9 +19,81 @@ from config import Config
 
 router = Router()
 
-# Настройка ЮKassa
-Configuration.account_id = Config.YUKASSA_SHOP_ID
-Configuration.secret_key = Config.YUKASSA_API_KEY
+# Функция для создания платежа через ЮKassa API
+def create_yukassa_payment(amount: float, description: str, metadata: dict, email: str = None):
+    url = "https://api.yookassa.ru/v3/payments"
+    
+    # Создаем заголовки с авторизацией
+    auth_string = f"{Config.YUKASSA_SHOP_ID}:{Config.YUKASSA_API_KEY}"
+    auth_bytes = auth_string.encode('ascii')
+    base64_bytes = base64.b64encode(auth_bytes)
+    base64_auth = base64_bytes.decode('ascii')
+    
+    headers = {
+        "Authorization": f"Basic {base64_auth}",
+        "Idempotence-Key": str(uuid.uuid4()),
+        "Content-Type": "application/json"
+    }
+    
+    data = {
+        "amount": {
+            "value": f"{amount:.2f}",
+            "currency": "RUB"
+        },
+        "confirmation": {
+            "type": "redirect",
+            "return_url": "https://t.me/EllviBeauty_Bot"
+        },
+        "capture": True,
+        "description": description,
+        "metadata": metadata,
+        "receipt": {
+            "customer": {
+                "email": email if email else "noreply@example.com"
+            },
+            "items": [
+                {
+                    "description": description,
+                    "quantity": "1.00",
+                    "amount": {
+                        "value": f"{amount:.2f}",
+                        "currency": "RUB"
+                    },
+                    "vat_code": 1,
+                    "payment_mode": "full_payment",
+                    "payment_subject": "service"
+                }
+            ]
+        }
+    }
+    
+    response = requests.post(url, json=data, headers=headers)
+    
+    if response.status_code == 200:
+        return response.json()
+    else:
+        raise Exception(f"{response.status_code} Client Error: {response.text}")
+
+# Функция для проверки статуса платежа
+def check_yukassa_payment(payment_id: str):
+    url = f"https://api.yookassa.ru/v3/payments/{payment_id}"
+    
+    auth_string = f"{Config.YUKASSA_SHOP_ID}:{Config.YUKASSA_API_KEY}"
+    auth_bytes = auth_string.encode('ascii')
+    base64_bytes = base64.b64encode(auth_bytes)
+    base64_auth = base64_bytes.decode('ascii')
+    
+    headers = {
+        "Authorization": f"Basic {base64_auth}",
+        "Content-Type": "application/json"
+    }
+    
+    response = requests.get(url, headers=headers)
+    
+    if response.status_code == 200:
+        return response.json()
+    else:
+        raise Exception(f"{response.status_code} Client Error: {response.text}")
 
 # ============== ПОКУПКА ПОДПИСКИ МОДЕЛИ ==============
 
@@ -66,43 +139,34 @@ async def proceed_payment(callback: CallbackQuery, bot: Bot, db: Database):
     user = await db.get_user(callback.from_user.id)
     
     try:
-        # Создаем уникальный идентификатор платежа
-        idempotence_key = str(uuid.uuid4())
-        
         # Создаем платеж через ЮKassa
-        payment = Payment.create({
-            "amount": {
-                "value": f"{Config.MODEL_SUBSCRIPTION_PRICE}.00",
-                "currency": "RUB"
-            },
-            "confirmation": {
-                "type": "redirect",
-                "return_url": f"https://t.me/{(await bot.get_me()).username}"
-            },
-            "capture": True,
-            "description": f"Привилегированная подписка на {Config.MODEL_SUBSCRIPTION_DAYS} дней",
-            "metadata": {
-                "user_id": callback.from_user.id,
+        payment = create_yukassa_payment(
+            amount=Config.MODEL_SUBSCRIPTION_PRICE,
+            description=f"Привилегированная подписка на {Config.MODEL_SUBSCRIPTION_DAYS} дней",
+            metadata={
+                "user_id": str(callback.from_user.id),
                 "username": callback.from_user.username or "unknown",
                 "subscription_type": "model"
-            }
-        }, idempotence_key)
+            },
+            email=f"{callback.from_user.id}@telegram.user"
+        )
         
         # Получаем ссылку для оплаты
-        payment_url = payment.confirmation.confirmation_url
+        payment_url = payment['confirmation']['confirmation_url']
+        payment_id = payment['id']
         
         # Отправляем ссылку пользователю
         from aiogram.utils.keyboard import InlineKeyboardBuilder
         builder = InlineKeyboardBuilder()
         builder.button(text="💳 Перейти к оплате", url=payment_url)
-        builder.button(text="🔄 Проверить оплату", callback_data=f"check_payment_{payment.id}")
+        builder.button(text="🔄 Проверить оплату", callback_data=f"check_payment_{payment_id}")
         builder.button(text="🔙 Назад", callback_data="back_to_menu")
         builder.adjust(1)
         
         await callback.message.edit_text(
             f"💳 Счет на оплату создан!\n\n"
             f"💰 Сумма: {Config.MODEL_SUBSCRIPTION_PRICE} руб\n"
-            f"📝 ID платежа: {payment.id}\n\n"
+            f"📝 ID платежа: {payment_id}\n\n"
             f"Нажмите кнопку ниже для перехода к оплате.\n"
             f"После оплаты нажмите 'Проверить оплату'.",
             reply_markup=builder.as_markup()
@@ -123,14 +187,15 @@ async def check_payment(callback: CallbackQuery, db: Database):
     
     try:
         # Получаем информацию о платеже
-        payment = Payment.find_one(payment_id)
+        payment = check_yukassa_payment(payment_id)
         
-        if payment.status == "succeeded":
+        if payment['status'] == "succeeded":
             # Платеж успешен - активируем подписку
             await db.add_subscription(
                 user_id=callback.from_user.id,
                 days=Config.MODEL_SUBSCRIPTION_DAYS,
-                payment_id=payment_id
+                payment_id=payment_id,
+                role="model"
             )
             
             user = await db.get_user(callback.from_user.id)
@@ -147,17 +212,17 @@ async def check_payment(callback: CallbackQuery, db: Database):
                 )
             )
             
-        elif payment.status == "pending":
+        elif payment['status'] == "pending":
             await callback.answer("⏳ Платеж в обработке. Попробуйте проверить позже.", show_alert=True)
             
-        elif payment.status == "canceled":
+        elif payment['status'] == "canceled":
             await callback.message.edit_text(
                 "❌ Платеж отменен.\n\n"
                 "Попробуйте оформить подписку снова.",
                 reply_markup=get_back_keyboard()
             )
         else:
-            await callback.answer(f"⚠️ Статус платежа: {payment.status}", show_alert=True)
+            await callback.answer(f"⚠️ Статус платежа: {payment['status']}", show_alert=True)
             
     except Exception as e:
         await callback.answer(f"❌ Ошибка проверки платежа: {e}", show_alert=True)
@@ -243,43 +308,34 @@ async def proceed_customer_payment(callback: CallbackQuery, bot: Bot, db: Databa
     user = await db.get_user(callback.from_user.id)
     
     try:
-        # Создаем уникальный идентификатор платежа
-        idempotence_key = str(uuid.uuid4())
-        
         # Создаем платеж через ЮKassa
-        payment = Payment.create({
-            "amount": {
-                "value": f"{Config.CUSTOMER_SUBSCRIPTION_PRICE}.00",
-                "currency": "RUB"
-            },
-            "confirmation": {
-                "type": "redirect",
-                "return_url": f"https://t.me/{(await bot.get_me()).username}"
-            },
-            "capture": True,
-            "description": f"Подписка заказчика на {Config.CUSTOMER_SUBSCRIPTION_DAYS} дней",
-            "metadata": {
-                "user_id": callback.from_user.id,
+        payment = create_yukassa_payment(
+            amount=Config.CUSTOMER_SUBSCRIPTION_PRICE,
+            description=f"Подписка заказчика на {Config.CUSTOMER_SUBSCRIPTION_DAYS} дней",
+            metadata={
+                "user_id": str(callback.from_user.id),
                 "username": callback.from_user.username or "unknown",
                 "subscription_type": "customer"
-            }
-        }, idempotence_key)
+            },
+            email=f"{callback.from_user.id}@telegram.user"
+        )
         
         # Получаем ссылку для оплаты
-        payment_url = payment.confirmation.confirmation_url
+        payment_url = payment['confirmation']['confirmation_url']
+        payment_id = payment['id']
         
         # Отправляем ссылку пользователю
         from aiogram.utils.keyboard import InlineKeyboardBuilder
         builder = InlineKeyboardBuilder()
         builder.button(text="💳 Перейти к оплате", url=payment_url)
-        builder.button(text="🔄 Проверить оплату", callback_data=f"check_customer_payment_{payment.id}")
+        builder.button(text="🔄 Проверить оплату", callback_data=f"check_customer_payment_{payment_id}")
         builder.button(text="🔙 Назад", callback_data="back_to_menu")
         builder.adjust(1)
         
         await callback.message.edit_text(
             f"💳 Счет на оплату создан!\n\n"
             f"💰 Сумма: {Config.CUSTOMER_SUBSCRIPTION_PRICE} руб\n"
-            f"📝 ID платежа: {payment.id}\n\n"
+            f"📝 ID платежа: {payment_id}\n\n"
             f"Нажмите кнопку ниже для перехода к оплате.\n"
             f"После оплаты нажмите 'Проверить оплату'.",
             reply_markup=builder.as_markup()
@@ -300,14 +356,15 @@ async def check_customer_payment(callback: CallbackQuery, db: Database):
     
     try:
         # Получаем информацию о платеже
-        payment = Payment.find_one(payment_id)
+        payment = check_yukassa_payment(payment_id)
         
-        if payment.status == "succeeded":
+        if payment['status'] == "succeeded":
             # Платеж успешен - активируем подписку
             await db.add_subscription(
                 user_id=callback.from_user.id,
                 days=Config.CUSTOMER_SUBSCRIPTION_DAYS,
-                payment_id=payment_id
+                payment_id=payment_id,
+                role="customer"
             )
             
             user = await db.get_user(callback.from_user.id)
@@ -320,17 +377,17 @@ async def check_customer_payment(callback: CallbackQuery, db: Database):
                 reply_markup=get_customer_menu_keyboard_with_subscription(has_subscription=True)
             )
             
-        elif payment.status == "pending":
+        elif payment['status'] == "pending":
             await callback.answer("⏳ Платеж в обработке. Попробуйте проверить позже.", show_alert=True)
             
-        elif payment.status == "canceled":
+        elif payment['status'] == "canceled":
             await callback.message.edit_text(
                 "❌ Платеж отменен.\n\n"
                 "Попробуйте оформить подписку снова.",
                 reply_markup=get_back_keyboard()
             )
         else:
-            await callback.answer(f"⚠️ Статус платежа: {payment.status}", show_alert=True)
+            await callback.answer(f"⚠️ Статус платежа: {payment['status']}", show_alert=True)
             
     except Exception as e:
         await callback.answer(f"❌ Ошибка проверки платежа: {e}", show_alert=True)

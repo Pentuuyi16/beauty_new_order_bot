@@ -260,6 +260,10 @@ async def process_model_gdpr_accept(callback: CallbackQuery, state: FSMContext, 
     # Создаем пользователя
     await db.add_user(callback.from_user.id, callback.from_user.username, "model")
     
+    # Проверяем есть ли активная подписка МОДЕЛИ
+    sub_info = await db.get_subscription_info(callback.from_user.id)
+    is_privileged = sub_info['has_subscription']
+    
     # Обновляем данные
     await db.update_user(
         callback.from_user.id,
@@ -276,7 +280,7 @@ async def process_model_gdpr_accept(callback: CallbackQuery, state: FSMContext, 
         phone_1=data.get('phone_1'),
         portfolio_ids=data.get('portfolio_ids'),
         gdpr_consent=True,
-        is_privileged=False
+        is_privileged=is_privileged  # Ставим на основе подписки МОДЕЛИ
     )
     
     await state.clear()
@@ -289,8 +293,8 @@ async def process_model_gdpr_accept(callback: CallbackQuery, state: FSMContext, 
         f"Оформите привилегированную подписку всего за 100 руб/месяц!\n\n"
         f"После перехода вам будут доступны все функции.",
         reply_markup=get_model_menu_keyboard_with_subscription(
-            is_privileged=False, 
-            has_subscription=False
+            is_privileged=is_privileged,
+            has_subscription=sub_info['has_subscription']
         )
     )
 
