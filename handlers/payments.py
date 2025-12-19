@@ -427,3 +427,88 @@ async def customer_subscription_info(callback: CallbackQuery, db: Database):
         text,
         reply_markup=get_customer_subscription_keyboard()
     )
+    # ============== ПРОБНЫЕ ПОДПИСКИ ==============
+
+@router.callback_query(F.data == "activate_trial_model")
+async def activate_trial_model(callback: CallbackQuery, db: Database):
+    """Активировать пробную подписку модели"""
+    await callback.answer()
+    
+    # Проверяем использовал ли уже пробный период
+    trial_used = await db.check_trial_used(callback.from_user.id, "model")
+    
+    if trial_used:
+        await callback.message.edit_text(
+            "⚠️ Вы уже использовали бесплатный пробный период для модели.\n\n"
+            "Оформите платную подписку для продолжения использования привилегий.",
+            reply_markup=get_back_keyboard()
+        )
+        return
+    
+    # Активируем пробную подписку на 30 дней
+    await db.activate_trial_subscription(
+        user_id=callback.from_user.id,
+        role="model",
+        days=30
+    )
+    
+    # Получаем информацию о подписке
+    sub_info = await db.get_subscription_info(callback.from_user.id)
+    
+    await callback.message.edit_text(
+        "🎉 Поздравляем! Бесплатная подписка активирована!\n\n"
+        f"✅ Статус: Активна\n"
+        f"📅 Действует до: {sub_info['end_date']}\n"
+        f"⏰ Дней осталось: {sub_info['days_left']}\n\n"
+        "🎁 Теперь вам доступны все функции привилегированной модели:\n"
+        "• Создание заявок 'Хочу быть моделью'\n"
+        "• Получение откликов от заказчиков\n"
+        "• Приоритетное размещение в канале\n"
+        "• Увеличенная видимость профиля\n\n"
+        "Спасибо, что выбрали нас! ❤️",
+        reply_markup=get_model_menu_keyboard_with_subscription(
+            is_privileged=True,
+            has_subscription=True
+        )
+    )
+
+@router.callback_query(F.data == "activate_trial_customer")
+async def activate_trial_customer(callback: CallbackQuery, db: Database):
+    """Активировать пробную подписку заказчика"""
+    await callback.answer()
+    
+    # Проверяем использовал ли уже пробный период
+    trial_used = await db.check_trial_used(callback.from_user.id, "customer")
+    
+    if trial_used:
+        await callback.message.edit_text(
+            "⚠️ Вы уже использовали бесплатный пробный период для заказчика.\n\n"
+            "Оформите платную подписку для продолжения размещения заявок.",
+            reply_markup=get_back_keyboard()
+        )
+        return
+    
+    # Активируем пробную подписку на 30 дней
+    await db.activate_trial_subscription(
+        user_id=callback.from_user.id,
+        role="customer",
+        days=30
+    )
+    
+    # Получаем информацию о подписке
+    sub_info = await db.get_customer_subscription_info(callback.from_user.id)
+    
+    await callback.message.edit_text(
+        "🎉 Поздравляем! Бесплатная подписка активирована!\n\n"
+        f"✅ Статус: Активна\n"
+        f"📅 Действует до: {sub_info['end_date']}\n"
+        f"⏰ Дней осталось: {sub_info['days_left']}\n\n"
+        "🎁 Теперь вам доступны все функции заказчика:\n"
+        "• Неограниченное количество заявок\n"
+        "• Отклики от моделей\n"
+        "• Управление набором моделей\n"
+        "• Просмотр рейтингов моделей\n"
+        "• Приоритетная поддержка\n\n"
+        "Спасибо, что выбрали нас! ❤️",
+        reply_markup=get_customer_menu_keyboard_with_subscription(has_subscription=True)
+    )

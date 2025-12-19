@@ -3,6 +3,8 @@ import logging
 import sys
 from handlers.payments import router as payments_router
 from pathlib import Path
+import aiosqlite
+from datetime import datetime
 
 # Добавляем папку bot в путь
 sys.path.insert(0, str(Path(__file__).parent / "bot"))
@@ -29,6 +31,39 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
+async def check_expired_subscriptions(db: Database):
+    """Фоновая задача проверки истекших подписок"""
+    while True:
+        try:
+            async with aiosqlite.connect(db.db_path) as conn:
+                # Находим все истекшие подписки
+                async with conn.execute("""
+                    SELECT user_id, role FROM subscriptions 
+                    WHERE is_active = 1 AND end_date < ?
+                """, (datetime.now().isoformat(),)) as cursor:
+                    expired = await cursor.fetchall()
+                
+                for user_id, role in expired:
+                    # Деактивируем подписку
+                    await conn.execute("""
+                        UPDATE subscriptions 
+                        SET is_active = 0 
+                        WHERE user_id = ? AND role = ? AND end_date < ?
+                    """, (user_id, role, datetime.now().isoformat()))
+                    
+                    # Если это модель - убираем привилегии
+                    if role == "model":
+                        await db.update_user(user_id, is_privileged=False)
+                    
+                    logger.info(f"Подписка истекла для user_id={user_id}, role={role}")
+                
+                await conn.commit()
+        except Exception as e:
+            logger.error(f"Ошибка проверки подписок: {e}")
+        
+        # Проверяем каждые 24 часа (86400 секунд)
+        await asyncio.sleep(86400)
+
 async def main():
     # Инициализация бота и диспетчера
     bot = Bot(token=Config.TELEGRAM_TOKEN)
@@ -53,8 +88,13 @@ async def main():
     dp.include_router(viewer_router)
     dp.include_router(admin_router)
     dp.include_router(payments_router)
+    
     # Передача зависимостей
     dp['db'] = db
+    
+    # Запускаем фоновую проверку подписок
+    asyncio.create_task(check_expired_subscriptions(db))
+    logger.info("Запущена фоновая проверка подписок (каждые 24 часа)")
     
     # Запуск бота
     logger.info("Бот запущен")

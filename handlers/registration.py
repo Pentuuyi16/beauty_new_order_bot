@@ -9,7 +9,8 @@ from keyboards.inline import (
     get_customer_menu_keyboard_with_subscription,
     get_model_menu_keyboard_with_subscription,
     get_experience_keyboard,
-    get_yes_no_keyboard
+    get_yes_no_keyboard,
+    get_back_keyboard
 )
 from keyboards.reply import get_done_keyboard, remove_keyboard
 from utils.texts import *
@@ -108,6 +109,9 @@ async def process_customer_gdpr_accept(callback: CallbackQuery, state: FSMContex
     # Создаем пользователя
     await db.add_user(callback.from_user.id, callback.from_user.username, "customer")
     
+    # Получаем сохраненные данные о подписке (если меняли роль)
+    was_privileged = data.get('was_privileged', False)
+    
     # Обновляем данные
     await db.update_user(
         callback.from_user.id,
@@ -119,19 +123,55 @@ async def process_customer_gdpr_accept(callback: CallbackQuery, state: FSMContex
         phone_1=data.get('phone_1'),
         phone_2=data.get('phone_2'),
         photo_id=data.get('photo_id'),
-        gdpr_consent=True
+        gdpr_consent=True,
+        is_privileged=was_privileged
     )
     
     await state.clear()
     await callback.message.edit_text(REGISTRATION_SUCCESS)
     
-    await callback.message.answer(
-        f"🎉 Регистрация завершена!\n\n"
-        f"Перейдите в чат:\nhttps://t.me/model_cheby\n\n"
-        f"💼 Для создания заявок необходимо оформить подписку - 500 руб/месяц\n\n"
-        f"После перехода вам будут доступны все функции.",
-        reply_markup=get_customer_menu_keyboard_with_subscription(has_subscription=False)
-    )
+    # Проверяем использовал ли пользователь пробный период для заказчика
+    trial_used = await db.check_trial_used(callback.from_user.id, "customer")
+    has_subscription = await db.check_customer_subscription(callback.from_user.id)
+    
+    # Создаем клавиатуру
+    from keyboards.inline import get_back_keyboard
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    
+    if not trial_used and not has_subscription:
+        # Новый пользователь - показываем кнопку бесплатной подписки
+        builder.button(text="🎁 Получить бесплатный месяц", callback_data="activate_trial_customer")
+        builder.button(text="💼 Оформить подписку (500 руб/мес)", callback_data="buy_customer_subscription")
+    else:
+        # Уже использовал пробный период
+        builder.button(text="💼 Оформить подписку", callback_data="buy_customer_subscription")
+    
+    builder.button(text="⭐ Мой рейтинг", callback_data="my_rating")
+    builder.button(text="👤 Моя роль", callback_data="show_my_role")
+    builder.button(text="🔄 Сменить роль", callback_data="change_role")
+    builder.adjust(1)
+    
+    if not trial_used and not has_subscription:
+        text = (
+            f"🎉 Регистрация завершена!\n\n"
+            f"Перейдите в чат: https://t.me/model_cheby\n\n"
+            f"🎁 СПЕЦИАЛЬНОЕ ПРЕДЛОЖЕНИЕ ДЛЯ НОВЫХ ПОЛЬЗОВАТЕЛЕЙ!\n"
+            f"Получите БЕСПЛАТНЫЙ месяц подписки прямо сейчас!\n\n"
+            f"После активации вам будут доступны:\n"
+            f"✨ Неограниченное количество заявок\n"
+            f"✨ Отклики от моделей\n"
+            f"✨ Управление набором моделей\n"
+            f"✨ Просмотр рейтингов моделей"
+        )
+    else:
+        text = (
+            f"🎉 Регистрация завершена!\n\n"
+            f"Перейдите в чат: https://t.me/model_cheby\n\n"
+            f"💼 Для создания заявок необходимо оформить подписку - 500 руб/месяц"
+        )
+    
+    await callback.message.answer(text, reply_markup=builder.as_markup())
 
 @router.callback_query(RegistrationStates.customer_gdpr, F.data == "gdpr_decline")
 async def process_customer_gdpr_decline(callback: CallbackQuery, state: FSMContext):
@@ -280,23 +320,56 @@ async def process_model_gdpr_accept(callback: CallbackQuery, state: FSMContext, 
         phone_1=data.get('phone_1'),
         portfolio_ids=data.get('portfolio_ids'),
         gdpr_consent=True,
-        is_privileged=is_privileged  # Ставим на основе подписки МОДЕЛИ
+        is_privileged=is_privileged
     )
     
     await state.clear()
     await callback.message.edit_text(REGISTRATION_SUCCESS)
     
-    await callback.message.answer(
-        f"🎉 Регистрация завершена!\n\n"
-        f"Перейдите в чат:\nhttps://t.me/model_cheby\n\n"
-        f"💡 Хотите создавать свои заявки?\n"
-        f"Оформите привилегированную подписку всего за 100 руб/месяц!\n\n"
-        f"После перехода вам будут доступны все функции.",
-        reply_markup=get_model_menu_keyboard_with_subscription(
-            is_privileged=is_privileged,
-            has_subscription=sub_info['has_subscription']
+    # Проверяем использовал ли пользователь пробный период для модели
+    trial_used = await db.check_trial_used(callback.from_user.id, "model")
+    has_subscription = sub_info['has_subscription']
+    
+    # Создаем клавиатуру
+    from keyboards.inline import get_back_keyboard
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    
+    if not trial_used and not has_subscription:
+        # Новый пользователь - показываем кнопку бесплатной подписки
+        builder.button(text="🎁 Получить бесплатный месяц", callback_data="activate_trial_model")
+        builder.button(text="💎 Оформить подписку (100 руб/мес)", callback_data="buy_subscription")
+    else:
+        # Уже использовал пробный период
+        builder.button(text="💎 Стать привилегированной", callback_data="buy_subscription")
+    
+    builder.button(text="📋 Мои отклики", callback_data="my_responses")
+    builder.button(text="⭐ Мой рейтинг", callback_data="my_rating")
+    builder.button(text="👤 Моя роль", callback_data="show_my_role")
+    builder.button(text="🔄 Сменить роль", callback_data="change_role")
+    builder.adjust(1)
+    
+    if not trial_used and not has_subscription:
+        text = (
+            f"🎉 Регистрация завершена!\n\n"
+            f"Перейдите в чат: https://t.me/model_cheby\n\n"
+            f"🎁 СПЕЦИАЛЬНОЕ ПРЕДЛОЖЕНИЕ ДЛЯ НОВЫХ ПОЛЬЗОВАТЕЛЕЙ!\n"
+            f"Получите БЕСПЛАТНЫЙ месяц привилегированной подписки!\n\n"
+            f"После активации вам будут доступны:\n"
+            f"✨ Создание заявок 'Хочу быть моделью'\n"
+            f"✨ Отклики от заказчиков\n"
+            f"✨ Приоритет в поиске\n"
+            f"✨ Увеличенная видимость профиля"
         )
-    )
+    else:
+        text = (
+            f"🎉 Регистрация завершена!\n\n"
+            f"Перейдите в чат: https://t.me/model_cheby\n\n"
+            f"💡 Хотите создавать свои заявки?\n"
+            f"Оформите привилегированную подписку всего за 100 руб/месяц!"
+        )
+    
+    await callback.message.answer(text, reply_markup=builder.as_markup())
 
 @router.callback_query(RegistrationStates.model_gdpr, F.data == "gdpr_decline")
 async def process_model_gdpr_decline(callback: CallbackQuery, state: FSMContext):

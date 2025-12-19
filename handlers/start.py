@@ -214,14 +214,18 @@ async def process_role_change(callback: CallbackQuery, db: Database, state: FSMC
     elif new_role == "customer":
         await state.update_data(role="customer")
         await state.set_state(RegistrationStates.customer_full_name)
-        
-        # Проверяем подписку ЗАКАЗЧИКА
+    
+    # Проверяем подписку ЗАКАЗЧИКА
         has_subscription = await db.check_customer_subscription(callback.from_user.id)
+        trial_used = await db.check_trial_used(callback.from_user.id, "customer")
+    
         subscription_text = ""
         if has_subscription:
             sub_info = await db.get_customer_subscription_info(callback.from_user.id)
             subscription_text = f"\n\n💎 Отлично! У вас есть активная подписка заказчика до {sub_info['end_date']}!"
-        
+        elif not trial_used:
+            subscription_text = f"\n\n🎁 У вас доступен БЕСПЛАТНЫЙ месяц подписки!"
+    
         await callback.message.edit_text(
             "🔄 Вы меняете роль на заказчика!\n\n" +
             "📝 Начинаем регистрацию заказчика.\n\n"
@@ -238,13 +242,17 @@ async def process_role_change(callback: CallbackQuery, db: Database, state: FSMC
     elif new_role == "model":
         await state.update_data(role="model")
         await state.set_state(RegistrationStates.model_full_name)
-        
-        # Проверяем подписку МОДЕЛИ
+    
+    # Проверяем подписку МОДЕЛИ
         sub_info = await db.get_subscription_info(callback.from_user.id)
+        trial_used = await db.check_trial_used(callback.from_user.id, "model")
+    
         subscription_text = ""
         if sub_info['has_subscription']:
             subscription_text = f"\n\n💎 Отлично! У вас есть активная подписка модели до {sub_info['end_date']}!"
-        
+        elif not trial_used:
+            subscription_text = f"\n\n🎁 У вас доступен БЕСПЛАТНЫЙ месяц привилегированной подписки!"
+    
         await callback.message.edit_text(
             "🔄 Вы меняете роль на модель!\n\n" +
             "📝 Начинаем регистрацию модели.\n\n"

@@ -638,6 +638,35 @@ class Database:
                   rating >= 8, rating >= 8, rating >= 8, rating >= 8))
             await db.commit()
     
+    async def check_trial_used(self, user_id: int, role: str) -> bool:
+   
+        async with aiosqlite.connect(self.db_path) as db:
+            async with db.execute("""
+                SELECT id FROM subscriptions 
+                WHERE user_id = ? AND role = ? AND payment_id = 'trial'
+            """, (user_id, role)) as cursor:
+                result = await cursor.fetchone()
+                return result is not None
+
+    async def activate_trial_subscription(self, user_id: int, role: str, days: int = 30) -> int:
+        """Активировать пробную подписку"""
+        from datetime import datetime, timedelta
+    
+        end_date = datetime.now() + timedelta(days=days)
+    
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                "INSERT INTO subscriptions (user_id, end_date, payment_id, role) VALUES (?, ?, ?, ?)",
+                (user_id, end_date.isoformat(), 'trial', role)
+            )
+            await db.commit()
+        
+        # Обновляем статус привилегированной модели только если это подписка модели
+            if role == "model":
+                await self.update_user(user_id, is_privileged=True)
+        
+            return cursor.lastrowid
+
     async def check_response_rating_exists(self, response_id: int, rater_id: int) -> bool:
         """Проверить, оставлял ли уже оценку за этот отклик"""
         async with aiosqlite.connect(self.db_path) as db:
@@ -646,3 +675,5 @@ class Database:
             """, (response_id, rater_id)) as cursor:
                 result = await cursor.fetchone()
                 return result is not None
+            
+    
