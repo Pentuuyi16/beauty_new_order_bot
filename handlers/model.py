@@ -705,3 +705,186 @@ async def rate_customer(callback: CallbackQuery, db: Database):
         f"Вы оценили заказчика на {rating}/10\n"
         f"Новый средний рейтинг заказчика: {new_rating}/10.0 ({count} оценок)"
     )
+
+# ============== ПРОСМОТР ВСЕХ АКТИВНЫХ ЗАЯВОК ==============
+
+# ============== ПРОСМОТР ВСЕХ АКТИВНЫХ ЗАЯВОК ==============
+
+# ============== ПРОСМОТР ЗАЯВОК ПО КАТЕГОРИЯМ ==============
+
+@router.callback_query(F.data == "view_all_applications")
+async def view_all_applications(callback: CallbackQuery, db: Database):
+    """Показать кнопки с категориями"""
+    await callback.answer()
+    
+    text = (
+        "📋 Выберите категорию услуги:\n\n"
+        "Нажмите на интересующую вас категорию, "
+        "чтобы увидеть все активные заявки."
+    )
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=get_applications_categories_keyboard()
+    )
+
+@router.callback_query(F.data.startswith("viewcat_"))
+async def view_category_applications(callback: CallbackQuery, db: Database):
+    """Показать заявки выбранной категории"""
+    await callback.answer()
+    
+    category = callback.data.replace("viewcat_", "")
+    
+    # Получаем заявки по категории
+    applications = await db.get_active_applications_by_category(category)
+    
+    if not applications:
+        await callback.message.edit_text(
+            f"📋 В категории «{category}» пока нет активных заявок.\n\n"
+            "Выберите другую категорию:",
+            reply_markup=get_applications_categories_keyboard()
+        )
+        return
+    
+    # Показываем первую заявку
+    app = applications[0]
+    
+    text = format_application_for_model(app, 1, len(applications))
+    
+    # Сохраняем информацию о текущем просмотре в callback_data
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Откликнуться", callback_data=f"respond_{app['id']}")
+    
+    # Навигация если заявок больше 1
+    if len(applications) > 1:
+        builder.button(text="➡️ Следующая", callback_data=f"nextapp_{category}_1")
+    
+    builder.button(text="🔙 Назад к категориям", callback_data="view_all_applications")
+    builder.adjust(1)
+    
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+
+@router.callback_query(F.data.startswith("nextapp_"))
+async def navigate_applications(callback: CallbackQuery, db: Database):
+    """Навигация по заявкам внутри категории"""
+    await callback.answer()
+    
+    # Формат: nextapp_CATEGORY_INDEX или prevapp_CATEGORY_INDEX
+    parts = callback.data.split("_")
+    direction = parts[0]  # nextapp или prevapp
+    category = parts[1]
+    current_index = int(parts[2])
+    
+    # Получаем заявки категории
+    applications = await db.get_active_applications_by_category(category)
+    
+    if not applications:
+        await callback.message.edit_text(
+            "❌ Заявки не найдены.",
+            reply_markup=get_applications_categories_keyboard()
+        )
+        return
+    
+    # Вычисляем новый индекс
+    if direction == "nextapp":
+        new_index = current_index + 1
+    else:  # prevapp
+        new_index = current_index - 1
+    
+    # Проверяем границы
+    if new_index < 0:
+        new_index = len(applications) - 1
+    elif new_index >= len(applications):
+        new_index = 0
+    
+    app = applications[new_index]
+    text = format_application_for_model(app, new_index + 1, len(applications))
+    
+    # Кнопки навигации
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Откликнуться", callback_data=f"respond_{app['id']}")
+    
+    # Показываем стрелки навигации только если заявок больше 1
+    if len(applications) > 1:
+        builder.button(text="⬅️ Предыдущая", callback_data=f"prevapp_{category}_{new_index}")
+        builder.button(text="➡️ Следующая", callback_data=f"nextapp_{category}_{new_index}")
+    
+    builder.button(text="🔙 Назад к категориям", callback_data="view_all_applications")
+    builder.adjust(1, 2, 1)
+    
+    await callback.message.edit_text(text, reply_markup=builder.as_markup())
+
+def format_application_for_model(app: dict, current: int, total: int) -> str:
+    """Форматирование заявки для модели"""
+    text = f"📋 Заявка {current} из {total}\n"
+    text += f"━━━━━━━━━━━━━━━━\n\n"
+    text += f"🆔 Заявка #{app['id']}\n"
+    text += f"💆 Категория: {app['category']}\n"
+    text += f"📂 Подкатегория: {app['subcategory']}\n"
+    text += f"🏙️ Город: {app['city']}\n"
+    text += f"📍 Район: {app['district']}\n"
+    text += f"📅 Дата: {app['date']}\n"
+    text += f"🕐 Время: {app['time']}\n"
+    text += f"⏱️ Длительность: {app['duration']}\n"
+    text += f"👥 Нужно моделей: {app['models_needed']}\n"
+    text += f"💰 Тип участия: {app['participation_type']}\n"
+    
+    if app.get('payment_amount') and app['payment_amount'] != '-':
+        text += f"💵 Оплата: {app['payment_amount']}\n"
+    
+    if app.get('requirements'):
+        text += f"\n📋 Требования: {app['requirements']}\n"
+    
+    if app.get('comment') and app['comment'] != '-':
+        text += f"\n💬 Комментарий: {app['comment']}\n"
+    
+    return text
+
+# ============== ИНСТРУКЦИЯ ДЛЯ МОДЕЛЕЙ ==============
+
+@router.callback_query(F.data == "model_help")
+async def show_model_help(callback: CallbackQuery):
+    """Показать инструкцию для модели"""
+    await callback.answer()
+    
+    help_text = """
+❓ Как это работает
+
+👋 Добро пожаловать в платформу поиска моделей!
+
+📝 Что вы можете делать:
+
+1️⃣ Просматривать заявки
+   • Нажмите "📋 Перейти к заявкам"
+   • Выберите интересующую категорию
+   • Просмотрите заявки от мастеров
+
+2️⃣ Откликаться на заявки
+   • Откройте заявку
+   • Нажмите "✅ Откликнуться"
+   • Ожидайте ответа от заказчика
+
+3️⃣ Отслеживать отклики
+   • Нажмите "📋 Мои отклики"
+   • Смотрите статус ваших откликов:
+     ⏳ Ожидает - заказчик ещё не ответил
+     ✅ Принят - вам придут контакты
+     ❌ Отклонён - попробуйте другие заявки
+
+4️⃣ Оценивать заказчиков
+   • После работы оцените заказчика
+   • Это поможет другим моделям
+
+💎 Привилегированная подписка (100₽/мес):
+   • Создавайте свои заявки "Хочу быть моделью"
+   • Получайте отклики от заказчиков
+   • Приоритет в поиске
+
+💡 Совет: Регулярно проверяйте канал заявок - новые заявки публикуются там!
+
+Удачи! 🍀
+    """
+    
+    await callback.message.answer(help_text, reply_markup=get_back_keyboard())

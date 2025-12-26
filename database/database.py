@@ -265,6 +265,26 @@ class Database:
         """Закрыть набор на заявку"""
         await self.update_application(app_id, is_closed=True)
     
+    async def get_all_active_applications(self) -> List[Dict[str, Any]]:
+        """Получить все активные заявки"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM applications WHERE is_closed = 0 ORDER BY created_at DESC"
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
+            
+    async def get_active_applications_by_category(self, category: str) -> List[Dict[str, Any]]:
+        """Получить активные заявки по категории"""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                "SELECT * FROM applications WHERE is_closed = 0 AND category = ? ORDER BY created_at DESC",
+                (category,)
+            ) as cursor:
+                rows = await cursor.fetchall()
+                return [dict(row) for row in rows]
     # ============== MODEL APPLICATIONS ==============
     
     async def create_model_application(self, model_id: int, **kwargs) -> int:

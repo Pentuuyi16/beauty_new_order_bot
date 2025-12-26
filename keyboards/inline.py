@@ -56,8 +56,16 @@ def get_model_menu_keyboard(is_privileged: bool = False) -> InlineKeyboardMarkup
 def get_model_menu_keyboard_with_subscription(is_privileged: bool = False, has_subscription: bool = False) -> InlineKeyboardMarkup:
     """Меню модели с подпиской"""
     builder = InlineKeyboardBuilder()
+    
+    # Кнопка канала заявок (URL)
+    builder.button(text="💬 Открыть канал заявок", url="https://t.me/model_cheby")
+    # Кнопка перейти к заявкам
+    builder.button(text="📋 Перейти к заявкам", callback_data="view_all_applications")
+    
     builder.button(text="📋 Мои отклики", callback_data="my_responses")
     builder.button(text="⭐ Мой рейтинг", callback_data="my_rating")
+
+    builder.button(text="❓ Как это работает", callback_data="model_help")
     
     if is_privileged and has_subscription:
         builder.button(text="📝 Хочу быть моделью", callback_data="create_model_application")
@@ -269,10 +277,12 @@ def get_customer_menu_keyboard_with_subscription(has_subscription: bool = False)
     if has_subscription:
         builder.button(text="📝 Создать заявку", callback_data="create_application")
         builder.button(text="📋 Мои заявки", callback_data="my_applications")
+        builder.button(text="💬 Перейти в чат", url="https://t.me/model_cheby")
         builder.button(text="⭐ Мой рейтинг", callback_data="my_rating")
         builder.button(text="📊 Моя подписка", callback_data="customer_subscription_info")
     else:
         builder.button(text="💼 Оформить подписку", callback_data="buy_customer_subscription")
+        builder.button(text="💬 Перейти в чат", url="https://t.me/model_cheby")
         builder.button(text="⭐ Мой рейтинг", callback_data="my_rating")
     
     builder.button(text="👤 Моя роль", callback_data="show_my_role")
@@ -402,4 +412,24 @@ def get_search_categories_keyboard() -> InlineKeyboardMarkup:
         builder.button(text=category, callback_data=f"search_cat_{category}")
     builder.button(text="◀️ Назад", callback_data="model_menu")
     builder.adjust(2)
+    return builder.as_markup()
+
+def get_applications_categories_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура выбора категории для просмотра заявок"""
+    from config import Config
+    builder = InlineKeyboardBuilder()
+    
+    for category in Config.SERVICE_CATEGORIES:
+        builder.button(text=category, callback_data=f"viewcat_{category}")
+    
+    builder.button(text="🔙 Назад", callback_data="back_to_menu")
+    builder.adjust(2)
+    return builder.as_markup()
+
+def get_application_detail_keyboard(app_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура для конкретной заявки с кнопкой отклика"""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Откликнуться", callback_data=f"respond_{app_id}")
+    builder.button(text="🔙 Назад к категориям", callback_data="view_all_applications")
+    builder.adjust(1)
     return builder.as_markup()
