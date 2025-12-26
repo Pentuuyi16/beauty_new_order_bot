@@ -60,11 +60,9 @@ def get_model_menu_keyboard_with_subscription(is_privileged: bool = False, has_s
     builder.button(text="⭐ Мой рейтинг", callback_data="my_rating")
     
     if is_privileged and has_subscription:
-        # У модели есть активная подписка
         builder.button(text="📝 Хочу быть моделью", callback_data="create_model_application")
         builder.button(text="📊 Моя подписка", callback_data="subscription_info")
     else:
-        # У модели нет подписки
         builder.button(text="💎 Стать привилегированной", callback_data="buy_subscription")
     
     builder.button(text="👤 Моя роль", callback_data="show_my_role")
@@ -355,9 +353,53 @@ def get_rating_keyboard(response_id: int, rating_type: str) -> InlineKeyboardMar
     """
     builder = InlineKeyboardBuilder()
     
-    # Создаем кнопки от 1 до 10
     for i in range(1, 11):
         builder.button(text=str(i), callback_data=f"rate_{rating_type}_{response_id}_{i}")
     
-    builder.adjust(5)  # 5 кнопок в ряд
+    builder.adjust(5)
+    return builder.as_markup()
+
+# НОВЫЕ КЛАВИАТУРЫ ДЛЯ МОДЕЛЕЙ (ПО ТЗ)
+
+def get_model_welcome_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура после успешной регистрации модели"""
+    from config import Config
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📋 Перейти к заявкам", callback_data="model_view_applications")
+    builder.button(text="💬 Открыть канал заявок", url=Config.CHAT_LINK)
+    builder.button(text="❓ Как это работает (1 мин)", callback_data="model_help")
+    builder.adjust(1)
+    return builder.as_markup()
+
+def get_model_main_menu(is_privileged: bool = False) -> InlineKeyboardMarkup:
+    """Главное меню модели"""
+    from config import Config
+    builder = InlineKeyboardBuilder()
+    builder.button(text="📋 Лента заявок", callback_data="model_view_applications")
+    builder.button(text="🔍 Найти услугу", callback_data="model_search_service")
+    builder.button(text="📝 Мои отклики", callback_data="model_my_responses")
+    
+    if not is_privileged:
+        builder.button(text="💎 Стать привилегированной", callback_data="buy_subscription")
+    
+    builder.button(text="💬 Канал заявок", url=Config.CHAT_LINK)
+    builder.button(text="❓ Помощь", callback_data="model_help")
+    builder.adjust(1)
+    return builder.as_markup()
+
+def get_back_to_menu_keyboard() -> InlineKeyboardMarkup:
+    """Кнопка возврата в главное меню модели"""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="◀️ Назад в меню", callback_data="model_menu")
+    builder.adjust(1)
+    return builder.as_markup()
+
+def get_search_categories_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура выбора категории для поиска"""
+    from config import Config
+    builder = InlineKeyboardBuilder()
+    for category in Config.SERVICE_CATEGORIES:
+        builder.button(text=category, callback_data=f"search_cat_{category}")
+    builder.button(text="◀️ Назад", callback_data="model_menu")
+    builder.adjust(2)
     return builder.as_markup()
